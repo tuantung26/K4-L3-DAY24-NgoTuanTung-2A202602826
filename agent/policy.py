@@ -1,40 +1,13 @@
-"""BƯỚC 3b — PEP (Policy Enforcement Point) tại tool call (15').
-
-Cổng chặn TRƯỚC KHI tool thật sự execute. Đọc CHECKPOINTS.md (§3b).
-
-Interface bắt buộc (tests/test_policy.py và agent/runner.py gọi trực tiếp):
-
-    check(context: PolicyContext) -> tuple[bool, str]
-        Trả về (allow, reason).
-        `reason` KHÔNG BAO GIỜ được để trống — cả khi allow=True và
-        allow=False. Đây là evidence audit ở Bước 4 (rubric: "Audit
-        completeness = 100%" — điều kiện trượt nếu có dòng thiếu reason).
-
-PolicyContext — 5 input gốc và các input OBO cho lớp L3:
-
-    data_classification: str   "public" | "internal" | "restricted"
-    request_purpose: str       tự do, ví dụ "reconciliation", "support-reply"
-    agent_owner: str            định danh agent/run gọi tool này
-    delegation_depth: int       0 = gọi trực tiếp bởi user, >0 = agent gọi agent
-    egress_enabled: bool        run hiện tại có được phép gọi network không
-    principal_id: str           ID người ra lệnh từ data/principals.json
-    requested_tool: str         tool sắp gọi
-    agent_scopes: tuple[str]    quyền tối đa của agent
-    parent_scopes: tuple[str]   quyền của agent cha khi delegation_depth > 0
-    expires_at: str             ISO-8601 UTC; hết hạn phải deny
-
-Rule TỐI THIỂU bắt buộc (không được viết yếu hơn rule này):
-
-    classification == "restricted" and egress_enabled is True  ->  DENY
-
-Checkpoint OBO: quyền hiệu lực = principal.allowed_tools ∩ agent_scopes,
-và nếu depth > 0 thì còn giao với parent_scopes. Unknown principal, scope
-thiếu, run hết hạn đều deny kèm reason. Principal là fixture mô phỏng,
-không phải xác thực người dùng production.
-"""
+"""BƯỚC 3b — PEP (Policy Enforcement Point) tại tool call (15')."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+PRINCIPALS_FILE = BASE_DIR / "data" / "principals.json"
 
 
 @dataclass(frozen=True)
@@ -51,5 +24,63 @@ class PolicyContext:
     expires_at: str = ""
 
 
+def _is_expired(expires_at: str) -> bool:
+    if not expires_at:
+        return False
+    try:
+        # ISO-8601 parsing
+        dt = datetime.fromisoformat(expires_at)
+        now = datetime.now(timezone.utc)
+        return now > dt
+    except Exception:
+        return True
+
+
 def check(context: PolicyContext) -> tuple[bool, str]:
-    raise NotImplementedError("BƯỚC 3b: implement policy check")
+    """Policy check implementation.
+
+    Rule tối thiểu:
+        classification == "restricted" and egress_enabled is True -> DENY
+    """
+    # 1. Rule tối thiểu bắt buộc
+    if context.data_classification == "restricted" and context.egress_enabled is True:
+        return False, "Deny: restricted data classification with egress enabled is strictly prohibited"
+
+    # 2. Check expiration nếu có
+    if context.expires_at and _is_expired(context.expires_at):
+        return False, f"Deny: execution context has expired at {context.expires_at}"
+
+    # 3. Principal OBO verification nếu principal_id được cung cấp
+    if context.principal_id:
+        if not PRINCIPALS_FILE.exists():
+            return False, "Deny: principals.json not found"
+
+        principals = json.loads(PRINCIPALS_FILE.read_text(encoding="utf-8"))
+        if context.principal_id not in principals:
+            return False, f"Deny: unknown principal '{context.principal_id}'"
+
+        principal_info = principals[context.principal_id]
+        allowed_tools = set(principal_info.get("allowed_tools", []))
+        allowed_purposes = set(principal_info.get("purposes", []))
+
+        # Check requested tool vs principal allowed tools
+        if context.requested_tool:
+            if context.requested_tool not in allowed_tools:
+                return False, f"Deny: tool '{context.requested_tool}' not allowed for principal '{context.principal_id}'"
+
+            # Effective tool permission = principal.allowed_tools ∩ agent_scopes
+            if context.agent_scopes and context.requested_tool not in context.agent_scopes:
+                return False, f"Deny: tool '{context.requested_tool}' not in agent scopes"
+
+            # If delegated (depth > 0), must also be within parent_scopes
+            if context.delegation_depth > 0:
+                if context.parent_scopes and context.requested_tool not in context.parent_scopes:
+                    return False, f"Deny: tool '{context.requested_tool}' exceeds parent scopes at delegation depth {context.delegation_depth}"
+
+        # Check request purpose
+        if context.request_purpose and allowed_purposes and context.request_purpose not in allowed_purposes:
+            return False, f"Deny: purpose '{context.request_purpose}' not allowed for principal '{context.principal_id}'"
+
+    # Default allow with non-empty reason
+    tool_desc = context.requested_tool or "action"
+    return True, f"Allow: {tool_desc} complies with policy for principal '{context.principal_id or 'anonymous'}'"

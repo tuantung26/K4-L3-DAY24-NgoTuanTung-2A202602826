@@ -2,9 +2,9 @@
 
 | Nguồn / yêu cầu | Control đã làm | Evidence file:dòng | Giới hạn |
 |---|---|---|---|
-| Luật 91/2025/QH15 | | | |
-| NĐ 356/2025/NĐ-CP | | | |
-| Luật AI 134/2025/QH15 | | | |
-| OWASP ASI01, ASI03, ASI04 | | | |
+| Luật 91/2025/QH15 (Bảo vệ dữ liệu cá nhân) | Phân loại dữ liệu (Restricted/Internal/Public); kiểm soát xử lý dữ liệu cá nhân nhạy cảm (CCCD, STK, SĐT); redaction trước khi truyền qua boundary; kiểm soát quyền truy cập theo vai trò (OBO). | `agent/pii.py:14-49`, `agent/policy.py:46-77`, `agent/runner.py:80-128` | Mô hình phân loại và principal giả lập theo kịch bản lab; chưa tích hợp IAM/RBAC production hoàn chỉnh. |
+| NĐ 356/2025/NĐ-CP (Quy định chi tiết thi hành Luật Bảo vệ DLCN) | Ghi nhật ký xử lý dữ liệu kiểm toán bất biến (tamper-evident audit ledger) với liên kết chuỗi SHA-256; ghi rõ lý do (reason), mục đích (purpose), và thời điểm xử lý; chặn truyền dữ liệu ra đích không được phép. | `agent/ledger.py:16-64`, `agent/policy.py:46-48`, `reports/ledger.jsonl:1-24` | Hash chain cục bộ trong một file JSONL, chưa lưu trữ trên WORM storage hoặc phân tán chữ ký số bên ngoài. |
+| Luật AI 134/2025/QH15 (Quản trị & an toàn hệ thống AI) | Kiểm soát rủi ro prompt injection; kiến trúc Trifecta Split tách quyền agent (Run A không tiếp cận kho dữ liệu riêng/egress; Run B xử lý dữ liệu qua định danh tin cậy); PEP chặn hành vi tự động thực thi trái quyền. | `agent/runner.py:34-148`, `tests/test_split.py:75-116` | Dùng MockLLM theo bộ quy tắc deterministic mô phỏng LLM; chưa thử nghiệm trên toàn bộ các mô hình foundation thương mại. |
+| OWASP ASI01, ASI03, ASI04 (Top 10 for Agentic AI) | **ASI01 (Prompt Injection)**: Chặn khai thác dữ liệu qua prompt injection gián tiếp bằng Trifecta Split.<br>**ASI03 (Overreliance / Excessive Agency)**: PEP policy chặn tool `http_post` và `read_customer` vượt quyền.<br>**ASI04 (Supply Chain Vulnerabilities)**: Quét secrets với Gitleaks, pin hook pre-commit và khóa băm toàn vẹn dependency (`requirements.lock`). | `agent/runner.py:61-148`, `agent/policy.py:46-77`, `.pre-commit-config.yaml:1-6`, `requirements.lock:1-120` | Giới hạn kiểm soát mã nguồn và dependency trong kho lưu trữ lab; sink và payload thực thi cục bộ tại 127.0.0.1. |
 
-Chỉ ghi điều khoản cụ thể khi đã đối chiếu văn bản gốc. Mô phỏng kỹ thuật không tự chứng minh tuân thủ pháp luật.
+*Ghi chú:* Chỉ ghi điều khoản cụ thể khi đã đối chiếu văn bản gốc. Mô phỏng kỹ thuật không tự chứng minh tuân thủ pháp luật.
